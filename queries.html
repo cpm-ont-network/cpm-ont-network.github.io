@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeMirror SPARQL Example</title>
+    <!-- CodeMirror CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.9/codemirror.min.css">
+    <style>
+        .CodeMirror {
+            height: auto;
+            border: 1px solid #ccc;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Q1 – Total Cost of the Project</h1>
+    <textarea id="code1">
+PREFIX ci: <https://w3id.org/ci#>
+PREFIX cr: <https://w3id.org/cr#>
+SELECT DISTINCT ((ROUND(SUM(?unitPrice * ?quantity)* 100) / 100.0) AS ?totalPrice)
+WHERE {
+  ?set cr:hasAssignment ?subject.
+  ?subject a cr:CostItemToGeometryAssignment.
+  ?subject cr:refParamQuantity ?quantity.
+  ?subject cr:refCostItem ?costItem.
+  ?costItem ci:unitPrice ?unitPrice.
+}
+    </textarea>
+
+    <h1>Q2 – Cost Based on Element</h1>
+    <textarea id="code2">
+PREFIX ci: <https://w3id.org/ci#>
+PREFIX cr: <https://w3id.org/cr#>
+PREFIX ifc2x3: <https://standards.buildingsmart.org/IFC/DEV/IFC2X3/FINAL/OWL#>
+PREFIX ifc42: <https://standards.buildingsmart.org/IFC/DEV/IFC4/ADD2/OWL#>
+PREFIX exp: <https://w3id.org/express#>
+SELECT ?label  (SUM(?quantity) AS ?totalQuantity) ((ROUND(SUM(?unitPrice * ?quantity) * 100) / 100.0) AS ?totalPrice) ?ifcguid
+WHERE {
+  ?subject a cr:CostItemToGeometryAssignment.
+  ?subject cr:refParamQuantity ?quantity.
+  ?subject cr:refCostItem ?costItem.
+  ?subject cr:refGeometry ?element.
+  ?costItem ci:unitPrice ?unitPrice.
+  {
+    ?element ifc42:name_IfcRoot/exp:hasString ?label.
+    ?element ifc42:globalId_IfcRoot/exp:hasString ?ifcguid.
+  }
+  UNION
+  {
+    ?element ifc2x3:name_IfcRoot/exp:hasString ?label.
+    ?element ifc2x3:globalId_IfcRoot/exp:hasString ?ifcguid.
+  }
+}
+GROUP BY ?label ?ifcguid
+    </textarea>
+
+    <h1>Q3 – Labor Time Comparison Across Cost and Schedule Analyses</h1>
+    <textarea id="code3">
+PREFIX cr: <https://w3id.org/cr#>
+PREFIX msproj: <http://schemas.microsoft.com/project#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX ci: <https://w3id.org/ci#>
+SELECT ?task ?taskResourceTime ?cost (MAX(?timeLabourResource) as ?costResourceTime) 
+WHERE { 
+  ?taskToCostItemAssignment cr:refTask ?task .
+  ?taskToCostItemAssignment cr:refCostItem ?cost .
+  ?taskToGeometryAssignment cr:refTask ?task .
+  ?taskToGeometryAssignment cr:refGeometry ?geometry .
+  ?costToGeometryAssignment cr:refCostItem ?cost .
+  ?costToGeometryAssignment cr:refGeometry ?geometry .  
+  ?costToGeometryAssignment cr:refParamQuantity ?quantity .
+  ?costToResourceAssignment  cr:refCostItem ?cost .
+  ?costToResourceAssignment  cr:refResource ?resource .
+  ?resource a cr:LabourResource.
+  ?costToResourceAssignment cr:refParamUtilizationFactor ?utilizationFactor.
+  BIND(xsd:float(?quantity)*xsd:float(?utilizationFactor) as ?timeLabourResource)
+  ?task msproj:duration ?durationTask .
+  ?taskToResourceAssignment cr:refTask ?task .
+  ?taskToResourceAssignment cr:refResource ?resourceTask .
+  ?resourceTask a cr:LabourResource .
+  ?taskToResourceAssignment cr:refParamUtilizationRate ?rate .
+  BIND(IF(STRSTARTS(STR(?durationTask), "-"), -1, 1) AS ?coef)
+  BIND(COALESCE(xsd:integer(REPLACE(STR(?durationTask), "^.*[A-Z](\\d+)D.*$", "$1")), 0) AS ?d)
+  BIND(COALESCE(xsd:integer(REPLACE(STR(?durationTask), "^.*T(\\d+)H.*$", "$1")), 0) AS ?h)
+  BIND(COALESCE(xsd:integer(REPLACE(STR(?durationTask), "^.*T(?:|.*[A-Z])(\\d+)M.*$", "$1")), 0) AS ?m)
+  BIND(COALESCE(xsd:decimal(REPLACE(STR(?durationTask), "^.*T(?:|.*[A-Z])(\\d*\\.?\\d*)S.*$", "$1")), 0) AS ?s)
+  BIND(?coef * ((((?d * 24 + ?h) * 60) + ?m) * 60 + ?s)/3600 AS ?totalDuration)
+  BIND(?totalDuration*?rate AS ?taskResourceTime)       
+} 
+GROUP BY ?task ?taskResourceTime ?cost  
+    </textarea>
+
+    <h1>Q4 – Amount of Resources Needed Next Week</h1>
+    <textarea id="code4">
+PREFIX cr: <https://w3id.org/cr#>
+PREFIX msproj: <http://schemas.microsoft.com/project#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX ci: <https://w3id.org/ci#>
+PREFIX dtc: <https://dtc-ontology.cms.ed.tum.de/ontology#>
+PREFIX cterm: <https://w3id.org/cterm#>
+SELECT (SUM(?materialQuantity) as ?totalqty) ?um ?materialType ?materialObject
+WHERE { 
+  ?task dtc:startTime ?start.
+  ?task dtc:endTime ?end.
+  ?taskToCostItemAssignment cr:refTask ?task .
+  ?taskToCostItemAssignment cr:refCostItem ?cost .
+  ?taskToGeometryAssignment cr:refTask ?task .
+  ?taskToGeometryAssignment cr:refGeometry ?geometry .    
+  ?resource a cr:MaterialResource.
+  ?resource cterm:hasObject ?materialObject.
+  ?resource cterm:hasMaterial ?materialType.
+  ?resource cr:hasUnit ?um.
+  ?costToGeometryAssignment cr:refCostItem ?cost .
+  ?costToGeometryAssignment cr:refGeometry ?geometry .  
+  ?costToGeometryAssignment cr:refParamQuantity ?calculatedQuantity .
+  ?costToResourceAssignment  cr:refCostItem ?cost .
+  ?costToResourceAssignment  cr:refResource ?resource .
+  ?costToResourceAssignment cr:refParamUtilizationFactor ?utilizationFactor.
+  BIND(xsd:float(?calculatedQuantity)*xsd:float(?utilizationFactor) as ?materialQuantity)
+  FILTER (?start >= "2024-10-01T00:00:00"^^xsd:dateTime &&
+          ?start <= "2024-10-15T23:59:59"^^xsd:dateTime)   
+} 
+GROUP BY  ?um  ?materialType ?materialObject
+ORDER BY ?start      
+    </textarea>
+
+    <!-- CodeMirror JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.9/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.9/mode/sparql/sparql.min.js"></script>
+
+    <script>
+        // Initialize CodeMirror for all queries
+        CodeMirror.fromTextArea(document.getElementById('code1'), {
+            mode: 'sparql',
+            lineNumbers: true,
+            theme: 'default',
+            readOnly: false
+        });
+
+        CodeMirror.fromTextArea(document.getElementById('code2'), {
+            mode: 'sparql',
+            lineNumbers: true,
+            theme: 'default',
+            readOnly: false
+        });
+
+        CodeMirror.fromTextArea(document.getElementById('code3'), {
+            mode: 'sparql',
+            lineNumbers: true,
+            theme: 'default',
+            readOnly: false
+        });
+
+        CodeMirror.fromTextArea(document.getElementById('code4'), {
+            mode: 'sparql',
+            lineNumbers: true,
+            theme: 'default',
+            readOnly: false
+        });
+    </script>
+</body>
+</html>
